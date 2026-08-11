@@ -25,7 +25,7 @@
    the right neighbor and listen to the left neighbor and it all comes back
    together because of the ring structure.
 */
-SocketTransfer::SocketTransfer(int rank, int N, int base_port)
+SocketTransport::SocketTransport(int rank, int N, int base_port)
     : rank_(rank), world_size_(N), BASE_PORT(base_port) {
 
   int my_listen_port = BASE_PORT + rank;
@@ -88,7 +88,7 @@ SocketTransfer::SocketTransfer(int rank, int N, int base_port)
             << (rank - 1 + N) % N << "\n";
 }
 
-SocketTransfer::~SocketTransfer() {
+SocketTransport::~SocketTransport() {
   if (sock_send_ != -1) {
     close(sock_send_);
   }
@@ -98,9 +98,9 @@ SocketTransfer::~SocketTransfer() {
   }
 }
 
-void SocketTransfer::sendrecv(const void *send_data, std::size_t send_bytes,
-                              int dest_rank, void *recv_data,
-                              std::size_t recv_bytes, int src_rank) {
+void SocketTransport::sendrecv(const void *send_data, std::size_t send_bytes,
+                               int dest_rank, void *recv_data,
+                               std::size_t recv_bytes, int src_rank) {
   std::thread send_thread([this, send_data, send_bytes, dest_rank]() {
     send(send_data, send_bytes, dest_rank);
   });
@@ -120,40 +120,34 @@ void send_all(int sock_fd, const void *send_data, std::size_t bytes) {
   }
 }
 
-void SocketTransfer::send(const void *send_data, std::size_t bytes, int rank) {
+void SocketTransport::send(const void *send_data, std::size_t bytes, int rank) {
   // verify that rank maps to sock_next
   assert(rank == (this->rank_ + 1) % this->world_size_ &&
          "dest_rank does not match sock_next rank!");
   send_all(this->sock_send_, send_data, bytes);
 }
 
-std::vector<float> recv_all(int recv_fd, void *recv_data, std::size_t bytes) {
-  if (bytes % sizeof(float) != 0)
-    throw std::runtime_error("byte count is not a multiple of sizeof(float)");
-
-  std::vector<float> floats(bytes / sizeof(float));
-  std::byte *data = reinterpret_cast<std::byte *>(floats.data());
-
+void recv_all(int recv_fd, void *recv_data, std::size_t bytes) {
+  // Cast void* to char* so we can perform byte-offset pointer arithmetic
+  char *data = static_cast<char *>(recv_data);
   std::size_t received = 0;
 
   while (received < bytes) {
-    ssize_t n = recv(recv_fd, data + received, bytes - received, 0);
+    // System call writes incoming network bytes directly into (data + received)
+    ssize_t n = ::recv(recv_fd, data + received, bytes - received, 0);
 
     if (n == 0) {
-      throw std::runtime_error("peer closed connection");
+      throw std::runtime_error("Peer closed connection");
     }
-
     if (n < 0) {
       throw std::runtime_error("recv() failed");
     }
 
     received += static_cast<std::size_t>(n);
   }
-
-  return floats;
 }
 
-void SocketTransfer::recv(void *recv_data, std::size_t bytes, int src_rank) {
+void SocketTransport::recv(void *recv_data, std::size_t bytes, int src_rank) {
   assert(src_rank ==
              (this->rank_ - 1 + this->world_size_) % this->world_size_ &&
          "src_rank does not match sock_prev rank!");
