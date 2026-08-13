@@ -1,0 +1,6 @@
+If:
+  PathMatch: .*\.cuh$
+CompileFlags:
+  Add: 
+    - "-xcuda"
+    - "--cuda-gpu-arch=sm_89"
