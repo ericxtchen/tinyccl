@@ -6,7 +6,6 @@
 #include <sys/socket.h>
 #include <thread>
 #include <unistd.h>
-#include <vector>
 
 // ideally, we should have a connection to our left neighbor to receive data and
 // our right neighbor to send data without causing any deadlocks or race
@@ -25,7 +24,7 @@
    the right neighbor and listen to the left neighbor and it all comes back
    together because of the ring structure.
 */
-SocketTransport::SocketTransport(int rank, int N, int base_port)
+SocketTransport::SocketTransport(int base_port, int rank, int N)
     : rank_(rank), world_size_(N), BASE_PORT(base_port) {
 
   int my_listen_port = BASE_PORT + rank;

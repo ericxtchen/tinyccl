@@ -7,12 +7,16 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CUDA_STANDARD 20)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-set(CMAKE_CXX_COMPILER clang++)
-set(CMAKE_CUDA_COMPILER clang++)
+set(CMAKE_CXX_COMPILER clang++-22)
+set(CMAKE_CUDA_COMPILER clang++-22)
 
 set(CMAKE_CUDA_ARCHITECTURES 89)
 
-add_executable(myapp src/main.cpp)
+
+add_executable(myapp
+    src/main.cpp
+    src/socket_transport.cpp
+)
 
 target_compile_options(myapp PRIVATE
     $<$<COMPILE_LANGUAGE:CUDA>:--cuda-gpu-arch=sm_89>
@@ -20,3 +24,6 @@ target_compile_options(myapp PRIVATE
 
 find_package(CUDAToolkit REQUIRED)
 target_link_libraries(myapp PRIVATE CUDA::cudart)
+
+find_package(Threads REQUIRED)
+target_link_libraries(myapp PRIVATE Threads::Threads)
