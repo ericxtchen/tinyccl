@@ -1,10 +1,26 @@
 #!/usr/bin/env bash
 # Spins up N processes (ranks 0..N-1) of the ring-allreduce binary.
-# Usage: ./run_ring.sh <world_size> [path/to/binary]
+# Usage: ./run_ring.sh [--gpu] <world_size> [path/to/binary]
 set -euo pipefail
 
-WORLD_SIZE="${1:?Usage: $0 <world_size> [binary]}"
-BIN="${2:-./build/myapp}"
+GPU_FLAG=""
+POSITIONAL_ARGS=()
+
+for arg in "$@"; do
+  if [[ "$arg" == "--gpu" ]]; then
+    GPU_FLAG="--gpu"
+  else
+    POSITIONAL_ARGS+=("$arg")
+  fi
+done
+
+if [[ ${#POSITIONAL_ARGS[@]} -eq 0 ]]; then
+  echo "Usage: $0 [--gpu] <world_size> [binary]" >&2
+  exit 1
+fi
+
+WORLD_SIZE="${POSITIONAL_ARGS[0]}"
+BIN="${POSITIONAL_ARGS[1]:-./build/myapp}"
 LOG_DIR="./logs"
 
 if [[ ! -x "$BIN" ]]; then
@@ -15,9 +31,13 @@ fi
 rm -rf "$LOG_DIR" && mkdir -p "$LOG_DIR"
 
 pids=()
-echo "Launching $WORLD_SIZE ranks from $BIN ..."
+echo "Launching $WORLD_SIZE ranks from $BIN ${GPU_FLAG:+with GPU }..."
 for (( rank=0; rank<WORLD_SIZE; rank++ )); do
-  "$BIN" "$rank" "$WORLD_SIZE" > "$LOG_DIR/rank_${rank}.log" 2>&1 &
+  if [[ -n "$GPU_FLAG" ]]; then
+    "$BIN" "$GPU_FLAG" "$rank" "$WORLD_SIZE" > "$LOG_DIR/rank_${rank}.log" 2>&1 &
+  else
+    "$BIN" "$rank" "$WORLD_SIZE" > "$LOG_DIR/rank_${rank}.log" 2>&1 &
+  fi
   pids+=("$!")
 done
 

@@ -15,6 +15,7 @@ __global__ void reduce_add_kernel(const T *src_buffer, T *dest_buffer,
 
 template <typename T> class GpuDevice {
 public:
+  static constexpr bool is_gpu = true;
   void reduce_add(const T *src_buffer, T *dest_buffer, std::size_t count) {
     if (count == 0)
       return;

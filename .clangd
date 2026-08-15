@@ -1,6 +1,16 @@
-If:
-  PathMatch: .*\.cuh$
+CompilationDatabase: "build"
+
 CompileFlags:
-  Add: 
+  Add:
+    - "-std=c++20"
+    - "-I/usr/local/cuda/include"
+    - "-I${workspaceFolder}/include"
+
+---
+If:
+  PathMatch: .*\.(cu|cuh|hpp)$
+CompileFlags:
+  Add:
     - "-xcuda"
     - "--cuda-gpu-arch=sm_89"
+    - "--cuda-path=/usr/local/cuda"
