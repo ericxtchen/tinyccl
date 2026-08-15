@@ -1,21 +1,40 @@
 #!/usr/bin/env bash
 # Spins up N processes (ranks 0..N-1) of the ring-allreduce binary.
-# Usage: ./run_ring.sh [--gpu] <world_size> [path/to/binary]
+# Usage: ./run_ring.sh [--gpu] [--size <N>] <world_size> [path/to/binary]
 set -euo pipefail
 
-GPU_FLAG=""
+EXTRA_FLAGS=()
 POSITIONAL_ARGS=()
 
-for arg in "$@"; do
-  if [[ "$arg" == "--gpu" ]]; then
-    GPU_FLAG="--gpu"
-  else
-    POSITIONAL_ARGS+=("$arg")
-  fi
+# Parse arguments dynamically using a while loop
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --gpu)
+      EXTRA_FLAGS+=("--gpu")
+      shift
+      ;;
+    --size)
+      if [[ -z "${2:-}" ]]; then
+        echo "error: --size requires a value" >&2
+        exit 1
+      fi
+      EXTRA_FLAGS+=("--size" "$2")
+      shift 2
+      ;;
+    --size=*)
+      EXTRA_FLAGS+=("--size" "${1#*=}")
+      shift
+      ;;
+    *)
+      POSITIONAL_ARGS+=("$1")
+      shift
+      ;;
+  esac
 done
 
-if [[ ${#POSITIONAL_ARGS[@]} -eq 0 ]]; then
-  echo "Usage: $0 [--gpu] <world_size> [binary]" >&2
+# Ensure we have at least the world_size argument
+if [[ ${#POSITIONAL_ARGS[@]} -lt 1 ]]; then
+  echo "Usage: $0 [--gpu] [--size <N>] <world_size> [binary]" >&2
   exit 1
 fi
 
@@ -31,13 +50,11 @@ fi
 rm -rf "$LOG_DIR" && mkdir -p "$LOG_DIR"
 
 pids=()
-echo "Launching $WORLD_SIZE ranks from $BIN ${GPU_FLAG:+with GPU }..."
+echo "Launching $WORLD_SIZE ranks from $BIN (flags: ${EXTRA_FLAGS[*]:-none})..."
+
+# Launch each rank, passing along all parsed extra flags
 for (( rank=0; rank<WORLD_SIZE; rank++ )); do
-  if [[ -n "$GPU_FLAG" ]]; then
-    "$BIN" "$GPU_FLAG" "$rank" "$WORLD_SIZE" > "$LOG_DIR/rank_${rank}.log" 2>&1 &
-  else
-    "$BIN" "$rank" "$WORLD_SIZE" > "$LOG_DIR/rank_${rank}.log" 2>&1 &
-  fi
+  "$BIN" "${EXTRA_FLAGS[@]}" "$rank" "$WORLD_SIZE" > "$LOG_DIR/rank_${rank}.log" 2>&1 &
   pids+=("$!")
 done
 
