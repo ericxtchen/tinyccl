@@ -48,6 +48,8 @@ int main(int argc, char *argv[]) {
   SocketTransport t(BASE_PORT, rank, world_size);
   std::size_t bytes = host_arr.size() * sizeof(float);
 
+  RingTiming timing;
+
   if (use_gpu) {
     std::cout << "Rank " << rank << " running on GPU with " << host_arr.size()
               << " elements...\n";
@@ -60,7 +62,7 @@ int main(int argc, char *argv[]) {
     Ring_AllReduce<float, SocketTransport, GpuDevice<float>> allreduce(
         t, d, rank, world_size);
 
-    allreduce.execute(d_arr, host_arr.size());
+    timing = allreduce.execute(d_arr, host_arr.size());
 
     cudaMemcpy(host_arr.data(), d_arr, bytes, cudaMemcpyDeviceToHost);
     cudaFree(d_arr);
@@ -73,12 +75,18 @@ int main(int argc, char *argv[]) {
     Ring_AllReduce<float, SocketTransport, CpuDevice<float>> allreduce(
         t, d, rank, world_size);
 
-    allreduce.execute(host_arr.data(), host_arr.size());
+    timing = allreduce.execute(host_arr.data(), host_arr.size());
   }
 
   std::cout << "Rank " << rank
             << " execution complete. First element: " << host_arr[0]
             << ", Last element: " << host_arr.back() << "\n";
+
+  // Machine-parseable line for the benchmark driver to pick up.
+  std::cout << "RESULT," << rank << "," << world_size << "," << host_arr.size()
+            << "," << (use_gpu ? "gpu" : "cpu") << "," << timing.total_ms << ","
+            << timing.staging_ms << "," << timing.transfer_ms << ","
+            << timing.compute_ms << "\n";
 
   return 0;
 }

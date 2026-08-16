@@ -1,19 +1,21 @@
 // ring_allreduce = reduce scatter + allgather
-// do n - 1 steps of reduce scatter
-// we receive some chunk -> run our reduce function on it -> send it to neighbor
-// what if we had a thread that is in a worker loop waiting to receive data? how
-// does this fit with our current recv method signature? have to open a socket
-// connection on BASE_PORT + rank_ and listen from there once we get all data
-// from recv, run the reduce function and then send do we even need multiple
-// threads? we need to make sure there is no deadlock
-
 #ifndef RING_ALLREDUCE_H
 #define RING_ALLREDUCE_H
 
 #include "../include/device.hpp"
 #include "../include/transport.hpp"
+#include <chrono>
 #include <cuda_runtime.h>
 #include <vector>
+
+// Timing breakdown for one execute() call. staging_ms is 0 for CpuDevice
+// (there's no host<->device copy on that path).
+struct RingTiming {
+  double total_ms = 0.0;
+  double staging_ms = 0.0;  // cudaMemcpy device<->host bounce-buffer copies
+  double transfer_ms = 0.0; // network sendrecv
+  double compute_ms = 0.0;  // reduce_add
+};
 
 template <typename ValueType, TransportPolicy Transport,
           DevicePolicy<ValueType> Device>
@@ -23,7 +25,15 @@ public:
       : t_(t), d_(d), rank_(r), world_size_(N) {}
 
   // data is a pointer in GPU memory
-  void execute(ValueType *data, std::size_t total_elements) {
+  RingTiming execute(ValueType *data, std::size_t total_elements) {
+    using Clock = std::chrono::high_resolution_clock;
+    auto ms = [](Clock::duration d) {
+      return std::chrono::duration<double, std::milli>(d).count();
+    };
+
+    RingTiming timing;
+    auto exec_start = Clock::now();
+
     // This is the amount of elements each GPU gets.
     std::size_t chunk_size = total_elements / this->world_size_;
     std::size_t chunk_size_bytes = chunk_size * sizeof(ValueType);
@@ -50,28 +60,40 @@ public:
       ValueType *recv_ptr = data + (recv_chunk * chunk_size);
 
       if constexpr (Device::is_gpu) {
-        // if the device is a gpu, we want to copy all data from send_ptr +
-        // chunk_size_bytes onwards into a cpu held memory buffer and then use
-        // that to pass to t_.send()
-        // same for the recv
-        // then we need a buffer in the gpu that takes whatever we recvd to it
-        // can be passed to reduce_add
+        auto t0 = Clock::now();
         cudaMemcpy(send_cpu_buffer, send_ptr, chunk_size_bytes,
                    cudaMemcpyDeviceToHost);
-        t_.send(send_cpu_buffer, chunk_size_bytes, send_rank);
-        t_.recv(recv_cpu_buffer, chunk_size_bytes, recv_rank);
+        auto t1 = Clock::now();
+
+        // use sendrecv where send is is run on another thread to prevent
+        // deadlock
+        t_.sendrecv(send_cpu_buffer, chunk_size_bytes, send_rank,
+                    recv_cpu_buffer, chunk_size_bytes, recv_rank);
+        auto t2 = Clock::now();
+
         cudaMemcpy(gpu_buffer, recv_cpu_buffer, chunk_size_bytes,
                    cudaMemcpyHostToDevice);
+        auto t3 = Clock::now();
 
         d_.reduce_add(gpu_buffer, recv_ptr, chunk_size);
-      } else {
+        auto t4 = Clock::now();
 
+        timing.staging_ms += ms(t1 - t0) + ms(t3 - t2);
+        timing.transfer_ms += ms(t2 - t1);
+        timing.compute_ms += ms(t4 - t3);
+      } else {
         std::vector<ValueType> recv_buf(chunk_size);
 
-        t_.send(send_ptr, chunk_size_bytes, send_rank);
-        t_.recv(recv_buf.data(), chunk_size_bytes, recv_rank);
+        auto t0 = Clock::now();
+        t_.sendrecv(send_ptr, chunk_size_bytes, send_rank, recv_buf.data(),
+                    chunk_size_bytes, recv_rank);
+        auto t1 = Clock::now();
 
         d_.reduce_add(recv_buf.data(), recv_ptr, chunk_size);
+        auto t2 = Clock::now();
+
+        timing.transfer_ms += ms(t1 - t0);
+        timing.compute_ms += ms(t2 - t1);
       }
     }
 
@@ -84,18 +106,28 @@ public:
       ValueType *recv_ptr = data + (recv_chunk * chunk_size);
 
       if constexpr (Device::is_gpu) {
+        auto t0 = Clock::now();
         cudaMemcpy(send_cpu_buffer, send_ptr, chunk_size_bytes,
                    cudaMemcpyDeviceToHost);
+        auto t1 = Clock::now();
 
-        t_.send(send_cpu_buffer, chunk_size_bytes, send_rank);
-        t_.recv(recv_cpu_buffer, chunk_size_bytes, recv_rank);
+        t_.sendrecv(send_cpu_buffer, chunk_size_bytes, send_rank,
+                    recv_cpu_buffer, chunk_size_bytes, recv_rank);
+        auto t2 = Clock::now();
 
         cudaMemcpy(recv_ptr, recv_cpu_buffer, chunk_size_bytes,
                    cudaMemcpyHostToDevice);
+        auto t3 = Clock::now();
 
+        timing.staging_ms += ms(t1 - t0) + ms(t3 - t2);
+        timing.transfer_ms += ms(t2 - t1);
       } else {
-        t_.send(send_ptr, chunk_size_bytes, send_rank);
-        t_.recv(recv_ptr, chunk_size_bytes, recv_rank);
+        auto t0 = Clock::now();
+        t_.sendrecv(send_ptr, chunk_size_bytes, send_rank, recv_ptr,
+                    chunk_size_bytes, recv_rank);
+        auto t1 = Clock::now();
+
+        timing.transfer_ms += ms(t1 - t0);
       }
     }
 
@@ -104,6 +136,9 @@ public:
       cudaFreeHost(recv_cpu_buffer);
       cudaFree(gpu_buffer);
     }
+
+    timing.total_ms = ms(Clock::now() - exec_start);
+    return timing;
   }
 
 private:
