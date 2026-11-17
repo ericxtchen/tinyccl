@@ -1,8 +1,5 @@
-# tinyccl
+TinyCCL is an experimental collective communication library implemented in C++ and CUDA. It explores ring all-reduce using interchangeable CPU and GPU computation backends and TCP-based interprocess communication.
 
-So far, this code simulates multiple GPUs as multiple processes that use my single RTX 4060 GPU on my laptop where chunks are sent between them using TCP.
+The current experimental setup executes multiple ranks as separate processes sharing a single RTX 4060 GPU. Benchmarks characterize collective execution time, memory staging, communication, and computation overhead.
 
- Benchmarked results for the code on an RTX 4060 are in [results.png](results.png).
-
-
-Hopefully, I can find a way to get multiple GPUs to measure P2P memory access with `cudaMemcpyPeerAsync`...
+Multi-GPU peer-to-peer communication and interconnect performance remain future extensions due to hardware availability.
